@@ -1,0 +1,52 @@
+/* ---- トークン ---- */
+:root {
+  --ink: #141a30;        /* 深藍：夜の卓 */
+  --ink-2: #1c2440;      /* 藍の浮き */
+  --washi: #ece5d3;      /* 生成り：札面 */
+  --washi-dim: #d8cfba;
+  --sumi: #26222a;       /* 墨：札の数字 */
+  --shu: #c73e3a;        /* 朱：相手 */
+  --ai: #7d9cc0;         /* 藍鼠：自分 */
+  --kin: #c9a227;        /* 金：開帳・勝ち */
+  --ghost: rgba(236, 229, 211, 0.28);
+  --font-display: 'Zen Kaku Gothic New', sans-serif;
+  --font-body: 'Zen Kaku Gothic New', sans-serif;
+}
+
+* { box-sizing: border-box; margin: 0; padding: 0; }
+
+html, body {
+  height: 100%;
+  background: var(--ink);
+  color: var(--washi);
+  font-family: var(--font-body);
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  /* 卓の質感：中央がわずかに明るい */
+  background:
+    radial-gradient(120% 90% at 50% 40%, var(--ink-2) 0%, var(--ink) 70%);
+}
+
+#app { height: 100%; }
+
+button {
+  font-family: var(--font-body);
+  cursor: pointer;
+  border: none;
+  background: none;
+  color: inherit;
+}
+
+button:focus-visible {
+  outline: 2px solid var(--kin);
+  outline-offset: 2px;
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: 0.01ms !important;
+    transition-duration: 0.01ms !important;
+  }
+}
