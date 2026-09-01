@@ -22,7 +22,7 @@
     hint = null,
     cue = null,
     onReady = undefined,
-    peek = undefined,
+    peek = null,
     onceOnly = false,
     onTap = undefined,
   }: {
@@ -36,9 +36,10 @@
     /** 自分の手番が始まり，入力を受けられるようになるたびに呼ばれる．
      *  配りや演出の長さは場面で変わるので，あそびかたはこれに合わせる */
     onReady?: (() => void) | undefined;
-    /** あそびかた：伏せた札に透かす数字．盤の表示が進んだところで読むので，
-     *  値ではなく関数で受け取る（演出の途中で先の状態が出てしまわないように） */
-    peek?: (() => { mine: CardV[]; theirs: CardV[] } | null) | undefined;
+    /** あそびかた：伏せた札に透かす数字．差し替えるのは渡す側の役目で，
+     *  盤は受け取ったものをそのまま出す（演出の途中で先の状態が出ないように，
+     *  あそびかたは手番が始まる合図に合わせて差し替える） */
+    peek?: { mine: CardV[]; theirs: CardV[] } | null;
     /** あそびかた：一局きり．決着したら配り直さず，出てきたところへ戻る */
     onceOnly?: boolean;
     /** あそびかた：盤のどこかが押された．読み終えて先へ進む合図に使う */
@@ -188,10 +189,8 @@
   function sleep(ms: number) {
     return new Promise((r) => setTimeout(r, ms));
   }
-  let peeked = $state<{ mine: CardV[]; theirs: CardV[] } | null>(null);
   function refresh() {
     view = session.view;
-    peeked = peek?.() ?? null;
   }
 
   function myFaceUp(l: number) {
@@ -804,7 +803,7 @@
             selectable={oppSelectable || selOpp.includes(l as Lane)}
             pulse={scene === 'preview'}
             beckon={cueOpp.includes(l as Lane)}
-            peek={scene === 'magic' && peeked ? peeked.theirs[l] : null}
+            peek={scene === 'magic' && peek ? peek.theirs[l] : null}
             owner="opp"
             verdict={verdictFor(l as Lane, 'opp')}
             onclick={() => pickOpp(l as Lane)}
@@ -849,7 +848,7 @@
             selectable={inputOk}
             pulse={scene === 'preview'}
             beckon={cueMine.includes(l as Lane)}
-            peek={scene === 'magic' && peeked ? peeked.mine[l] : null}
+            peek={scene === 'magic' && peek ? peek.mine[l] : null}
             owner="me"
             verdict={verdictFor(l as Lane, 'me')}
             onclick={() => pickMine(l as Lane)}

@@ -44,8 +44,6 @@ type Step = {
   draw?: Card;
   /** この手のあとも自分の手番のままにする（4つの手を続けて触らせる間だけ） */
   keepTurn?: boolean;
-  /** この手を最後に，伏せた札の透かしを消す */
-  endsPeek?: boolean;
 };
 
 // 配りは固定．自分の合計が小さいので先手も自分になる（14 < 18）
@@ -89,8 +87,6 @@ const SCRIPT: Step[] = [
     },
     action: { type: 'xswap', mine: 1, theirs: 2 },
     keepTurn: true,
-    // すりかえた札は正体を失う．ぶらふの番には，もう何も見えていない
-    endsPeek: true,
   },
   {
     guide: {
@@ -171,7 +167,10 @@ export class TutorialSession implements Session {
   private guide: Guide | null = null;
   private guideSubs = new Set<(g: Guide | null) => void>();
   private timers: ReturnType<typeof setTimeout>[] = [];
-  /** 透かし．手の効き目を見せるため，すりかえまでは数字を薄く出す */
+  /** 透かし．自分の手の効き目が見えるように，4つの手の間は数字を薄く出す．
+   *  相手の番に入ったところで消す：そこから先は本物か見せかけかも分からない */
+  private peekVal: { mine: Card[]; theirs: Card[] } | null = null;
+  private peekSubs = new Set<(v: { mine: Card[]; theirs: Card[] } | null) => void>();
   private peekOn = true;
   /** 相手の番の手前で止まっているか．待つのは読む時間を自分で決めさせるため */
   private waitingTap = false;
@@ -239,6 +238,7 @@ export class TutorialSession implements Session {
 
   start() {
     this.em.emit({ t: 'start' });
+    this.refreshPeek();
     // 配っている間は，覚えることだけを言う
     this.setGuide({
       who: 'me',
@@ -247,18 +247,13 @@ export class TutorialSession implements Session {
     });
   }
 
-  /** 伏せた札に透かす数字．消えたあとはnull（記憶だけが頼りになる） */
-  peek() {
-    return this.peekOn
-      ? { mine: this.s.hands[0].slice(), theirs: this.s.hands[1].slice() }
-      : null;
-  }
-
   /** 盤が自分の入力を受けられるようになったところで，その手の一行を出す．
-   *  配りも演出も長さが場面で変わるので，時間ではなく盤の合図に合わせる */
+   *  配りも演出も長さが場面で変わるので，時間ではなく盤の合図に合わせる．
+   *  透かしもここで差し替える（演出が済んだ形＝盤に見えている形になる） */
   ready() {
     const step = SCRIPT[this.i];
     if (step?.guide.who === 'me') this.setGuide(step.guide);
+    this.refreshPeek();
   }
 
   /** 台本の手だけを受け取る．違う手は短く断って，盤はそのまま */
@@ -276,7 +271,6 @@ export class TutorialSession implements Session {
 
     this.s = applyAction(this.s, a, this.rngFor(step.draw), this.cfg);
     this.i += 1;
-    if (step.endsPeek) this.peekOn = false;
     if (this.s.phase === 'reveal') {
       this.setGuide(null);
       this.finish(a.type !== 'pass');
@@ -293,6 +287,9 @@ export class TutorialSession implements Session {
     this.later(() => {
       const next = SCRIPT[this.i];
       if (!next || next.guide.who !== 'opp') return;
+      // ここから相手の番．透かしはここで消す
+      this.peekOn = false;
+      this.refreshPeek();
       this.waitingTap = true;
       this.setGuide({ ...next.guide, note: TAP_NOTE });
     }, beatOf(a));
@@ -312,7 +309,6 @@ export class TutorialSession implements Session {
     this.setGuide(step.guide);
     this.s = applyAction(this.s, step.action, this.rngFor(step.draw), this.cfg);
     this.i += 1;
-    if (step.endsPeek) this.peekOn = false;
     const rec = this.s.shakeLog[this.s.shakeLog.length - 1];
     this.em.emit({
       t: 'oppShake',
@@ -344,6 +340,7 @@ export class TutorialSession implements Session {
     this.i = 0;
     this.peekOn = true;
     this.waitingTap = false;
+    this.refreshPeek();
     this.setGuide(null);
     this.start();
   }
@@ -352,6 +349,13 @@ export class TutorialSession implements Session {
     this.em.subs.add(cb);
     this.em.drain(cb);
     return () => this.em.subs.delete(cb);
+  }
+
+  /** 伏せた札に透かす数字を受け取る．消えたあとはnull（記憶だけが頼りになる） */
+  onPeek(cb: (v: { mine: Card[]; theirs: Card[] } | null) => void) {
+    this.peekSubs.add(cb);
+    cb(this.peekVal);
+    return () => this.peekSubs.delete(cb);
   }
 
   /** 盤の下の一行を受け取る．Sessionには無い，あそびかた専用の口 */
@@ -365,6 +369,14 @@ export class TutorialSession implements Session {
     this.clearTimers();
     this.em.subs.clear();
     this.guideSubs.clear();
+    this.peekSubs.clear();
+  }
+
+  private refreshPeek() {
+    this.peekVal = this.peekOn
+      ? { mine: this.s.hands[0].slice(), theirs: this.s.hands[1].slice() }
+      : null;
+    this.peekSubs.forEach((f) => f(this.peekVal));
   }
 
   private setGuide(g: Guide | null) {

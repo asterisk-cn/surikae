@@ -9,11 +9,16 @@
 
   const session = new TutorialSession();
   let guide = $state<Guide | null>(null);
+  let peek = $state<{ mine: number[]; theirs: number[] } | null>(null);
 
-  const off = session.onGuide((g) => (guide = g));
+  const offGuide = session.onGuide((g) => (guide = g));
+  const offPeek = session.onPeek((v) => (peek = v));
   $effect(() => {
     queueMicrotask(() => session.start());
-    return off;
+    return () => {
+      offGuide();
+      offPeek();
+    };
   });
 
   // 一行は台本に書いたとおりに出す．書いていなければ手の名前だけ
@@ -45,7 +50,7 @@
   {hint}
   {cue}
   onReady={() => session.ready()}
-  peek={() => session.peek()}
+  {peek}
   onceOnly
   onTap={() => session.tap()}
 />
