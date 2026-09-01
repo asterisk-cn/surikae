@@ -23,11 +23,13 @@
     cue = null,
     onReady = undefined,
     peek = undefined,
+    onceOnly = false,
+    onTap = undefined,
   }: {
     session: Session;
     onExit: () => void;
     /** あそびかたの一行．普段の対局ではnull */
-    hint?: { lead: string; note?: string } | null;
+    hint?: { lead: string; note?: string; who?: 'me' | 'opp' } | null;
     /** あそびかた：次に押す札とボタン．札が揃うまでは札を，
      *  揃ったらボタンを呼ぶ（言葉で位置を言わずに済ませる） */
     cue?: { mine: Lane[]; theirs: Lane[]; press: string } | null;
@@ -37,6 +39,10 @@
     /** あそびかた：伏せた札に透かす数字．盤の表示が進んだところで読むので，
      *  値ではなく関数で受け取る（演出の途中で先の状態が出てしまわないように） */
     peek?: (() => { mine: CardV[]; theirs: CardV[] } | null) | undefined;
+    /** あそびかた：一局きり．決着したら配り直さず，出てきたところへ戻る */
+    onceOnly?: boolean;
+    /** あそびかた：盤のどこかが押された．読み終えて先へ進む合図に使う */
+    onTap?: (() => void) | undefined;
   } = $props();
 
   const SHAKE_MS = 950; // 全アクション共通の演出長（固定）
@@ -172,6 +178,12 @@
     if (now && !wasReady) onReady?.();
     wasReady = now;
   });
+
+  /** あそびかた：指示された手以外は受けない．
+   *  見た目を変えると盤が別物になるので，disabledにはせず，押しても何も起きない */
+  function cueBlocks(press: string) {
+    return !!cue && cue.press !== press;
+  }
 
   function sleep(ms: number) {
     return new Promise((r) => setTimeout(r, ms));
@@ -407,6 +419,7 @@
 
   async function act(real: boolean) {
     if (!inputOk) return;
+    if (cueBlocks(real ? actLabel : 'ぶらふ')) return;
     const mine = selMine.slice().sort() as Lane[];
     const opp = selOpp.slice() as Lane[];
     let a: Action | null = null;
@@ -450,6 +463,7 @@
 
   async function passAct() {
     if (!inputOk || !view.canPass) return;
+    if (cueBlocks('ぱす')) return;
     busy = true;
     acting = true;
     clearSel();
@@ -752,6 +766,7 @@
 <svelte:window
   onpointerdown={() => {
     if (scene === 'deal') skipDeal = true;
+    onTap?.();
   }}
 />
 
@@ -845,12 +860,6 @@
     </section>
 
     <section class="dock">
-      {#if hint && scene !== 'reveal' && !banner}
-        <p class="guide" class:opp={hint.lead.startsWith('あいて')}>
-          {hint.lead}
-        </p>
-        {#if hint.note}<p class="guide-note">{hint.note}</p>{/if}
-      {/if}
       {#if toast}
         <p class="toast">{toast}</p>
       {:else if scene === 'magic'}
@@ -880,9 +889,19 @@
       {:else if verdictText}
         <p class="verdict">{verdictText}</p>
         <p class="score">{fin?.score[0]} - {fin?.score[1]}</p>
-        <button class="primary" disabled={againWait} onclick={again}
-          >{againWait ? 'あいてをまつ' : 'もういちど'}</button
-        >
+        {#if onceOnly}
+          <button class="primary" onclick={onExit}>もどる</button>
+        {:else}
+          <button class="primary" disabled={againWait} onclick={again}
+            >{againWait ? 'あいてをまつ' : 'もういちど'}</button
+          >
+        {/if}
+      {/if}
+
+      <!-- あそびかたの一行．押すものの下に置く -->
+      {#if hint && scene !== 'deal' && scene !== 'reveal' && !banner}
+        <p class="guide" class:opp={hint.who === 'opp'}>{hint.lead}</p>
+        {#if hint.note}<p class="guide-note">{hint.note}</p>{/if}
       {/if}
     </section>
   {/if}
@@ -1092,16 +1111,16 @@
   /* あそびかたの一行．手番の色（自分＝藍鼠／相手＝朱）で誰の番かを兼ねる */
   .guide {
     font-family: var(--font-display);
-    font-size: 0.95rem;
+    font-size: 1.15rem;
     font-weight: 700;
     letter-spacing: 0.1em;
     color: var(--ai);
   }
   .guide.opp { color: var(--shu); }
   .guide-note {
-    font-size: 0.72rem;
+    font-size: 0.88rem;
     letter-spacing: 0.08em;
-    color: rgba(236, 229, 211, 0.45);
+    color: rgba(236, 229, 211, 0.5);
     margin-top: -4px;
   }
   .toast {

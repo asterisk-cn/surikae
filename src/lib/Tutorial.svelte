@@ -16,17 +16,16 @@
     return off;
   });
 
-  let hint = $derived.by(() => {
-    if (!guide) return null;
-    if (guide.lead) return { lead: guide.lead, note: guide.note };
-    return {
-      lead:
-        guide.who === 'opp'
-          ? `あいて ▸ ${guide.press}`
-          : `${guide.press} を してみよう`,
-      note: guide.note,
-    };
-  });
+  // 一行は台本に書いたとおりに出す．書いていなければ手の名前だけ
+  let hint = $derived.by(() =>
+    guide
+      ? {
+          lead: guide.lead ?? guide.press ?? '',
+          note: guide.note,
+          who: guide.who,
+        }
+      : null,
+  );
 
   // 光らせるのは自分の手番だけ．相手の番は震えがそれを言う
   let cue = $derived(
@@ -47,4 +46,6 @@
   {cue}
   onReady={() => session.ready()}
   peek={() => session.peek()}
+  onceOnly
+  onTap={() => session.tap()}
 />
