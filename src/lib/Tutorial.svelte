@@ -1,6 +1,7 @@
 <script lang="ts">
   // あそびかた：本物の盤で，台本どおりの一局を自分で打つ．
-  // ここは台本セッションと盤をつなぎ，一行を組み立てるだけ．
+  // ここは台本セッションと盤をつなぐだけ．押す札とボタンは盤の上で光らせ，
+  // 一行には手の名前と一言しか置かない．
   import Game from './Game.svelte';
   import { TutorialSession, type Guide } from '../tutorial.ts';
 
@@ -15,17 +16,35 @@
     return off;
   });
 
-  // 「ひだり ＋ まんなか → いれかえ」のように，選ぶものと押すものだけを並べる
   let hint = $derived.by(() => {
     if (!guide) return null;
     if (guide.lead) return { lead: guide.lead, note: guide.note };
-    if (guide.who === 'opp')
-      return { lead: `あいて ▸ ${guide.press}`, note: guide.note };
     return {
-      lead: guide.pick ? `${guide.pick} → ${guide.press}` : `▸ ${guide.press}`,
+      lead:
+        guide.who === 'opp'
+          ? `あいて ▸ ${guide.press}`
+          : `${guide.press} を してみよう`,
       note: guide.note,
     };
   });
+
+  // 光らせるのは自分の手番だけ．相手の番は震えがそれを言う
+  let cue = $derived(
+    guide && guide.who === 'me' && guide.press
+      ? {
+          mine: guide.mine ?? [],
+          theirs: guide.theirs ?? [],
+          press: guide.press,
+        }
+      : null,
+  );
 </script>
 
-<Game {session} {onExit} {hint} onReady={() => session.begin()} />
+<Game
+  {session}
+  {onExit}
+  {hint}
+  {cue}
+  onReady={() => session.ready()}
+  peek={() => session.peek()}
+/>

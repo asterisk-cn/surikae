@@ -7,9 +7,11 @@
     selected = false,
     selectable = false,
     pulse = false,
+    beckon = false, // あそびかた：ここを押せ，と呼ぶ
     owner = 'me', // 'me' | 'opp' | 'none'（noneはまだ誰の札でもない＝配る前の山）
     verdict = null, // 'win' | 'lose' | 'tie' | null
     hidden = false, // 入れ替えの最中，スロットを空けるために姿を消す
+    peek = null, // あそびかたの間だけ，伏せた札に数字を透かす
     note = '',
     onclick = undefined,
   }: {
@@ -19,9 +21,11 @@
     selected?: boolean;
     selectable?: boolean;
     pulse?: boolean;
+    beckon?: boolean;
     owner?: 'me' | 'opp' | 'none';
     verdict?: 'win' | 'lose' | 'tie' | null;
     hidden?: boolean;
+    peek?: number | null;
     note?: string;
     onclick?: (() => void) | undefined;
   } = $props();
@@ -33,6 +37,7 @@
   class:selected
   class:selectable
   class:pulse
+  class:beckon
   class:faceup={faceUp}
   class:hidden
   class:win={verdict === 'win'}
@@ -44,6 +49,7 @@
 >
   <span class="flip">
     <span class="face back">
+      {#if peek !== null}<span class="peek">{peek}</span>{/if}
       {#if note}<span class="note">{note}</span>{/if}
     </span>
     <span class="face front">
@@ -95,6 +101,15 @@
   .card.me .back { border-color: var(--ai); }
   .card.opp .back { border-color: var(--shu); }
 
+  /* 透かし：あそびかたで，伏せた札の中身をうっすら見せる．
+     読めはするが，表の墨とは比べものにならない濃さにとどめる */
+  .peek {
+    position: absolute;
+    font-family: var(--font-display);
+    font-weight: 900;
+    font-size: clamp(1.8rem, 9vw, 3rem);
+    color: rgba(236, 229, 211, 0.26);
+  }
   .note {
     font-size: 0.7rem;
     letter-spacing: 0.1em;
@@ -216,6 +231,24 @@
       box-shadow:
         0 0 0 2px rgba(236, 229, 211, 0.5),
         0 0 18px rgba(236, 229, 211, 0.3);
+    }
+  }
+
+  /* あそびかた：次に押す札を呼ぶ．震えと違って，ゆっくり息をする */
+  .card.beckon { animation: beckon 1.5s ease-in-out infinite; }
+  @keyframes beckon {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(201, 162, 39, 0); }
+    50% {
+      box-shadow:
+        0 0 0 2px var(--kin),
+        0 0 18px rgba(201, 162, 39, 0.45);
+    }
+  }
+  /* 動きを抑える設定では，明滅させずに縁だけ点す */
+  @media (prefers-reduced-motion: reduce) {
+    .card.beckon {
+      animation: none;
+      box-shadow: 0 0 0 2px var(--kin);
     }
   }
 

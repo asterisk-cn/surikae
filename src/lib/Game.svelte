@@ -20,14 +20,23 @@
     session,
     onExit,
     hint = null,
+    cue = null,
     onReady = undefined,
+    peek = undefined,
   }: {
     session: Session;
     onExit: () => void;
     /** あそびかたの一行．普段の対局ではnull */
     hint?: { lead: string; note?: string } | null;
-    /** 配りと先攻の合図が済み，手番が始まったところで呼ばれる */
+    /** あそびかた：次に押す札とボタン．札が揃うまでは札を，
+     *  揃ったらボタンを呼ぶ（言葉で位置を言わずに済ませる） */
+    cue?: { mine: Lane[]; theirs: Lane[]; press: string } | null;
+    /** 自分の手番が始まり，入力を受けられるようになるたびに呼ばれる．
+     *  配りや演出の長さは場面で変わるので，あそびかたはこれに合わせる */
     onReady?: (() => void) | undefined;
+    /** あそびかた：伏せた札に透かす数字．盤の表示が進んだところで読むので，
+     *  値ではなく関数で受け取る（演出の途中で先の状態が出てしまわないように） */
+    peek?: (() => { mine: CardV[]; theirs: CardV[] } | null) | undefined;
   } = $props();
 
   const SHAKE_MS = 950; // 全アクション共通の演出長（固定）
@@ -137,11 +146,40 @@
   // 奪うのは回数が残っているとき，引くのは山があるときだけ．ふりはいつでも打てる
   let canAct = $derived(actionKind !== null && !xswapSpent && !pileEmpty);
 
+  // まだ選べていない札を呼ぶ．選び終えたら札は静まり，ボタンが呼ぶ
+  let cueMine = $derived(
+    cue && inputOk ? cue.mine.filter((l) => !selMine.includes(l)) : [],
+  );
+  // 相手の札は自分の札を選んでからでないと触れない．触れないものは呼ばない
+  let cueOpp = $derived(
+    cue && inputOk && oppSelectable
+      ? cue.theirs.filter((l) => !selOpp.includes(l))
+      : [],
+  );
+  let cueReady = $derived(
+    !!cue &&
+      inputOk &&
+      selMine.length === cue.mine.length &&
+      selOpp.length === cue.theirs.length &&
+      cue.mine.every((l) => selMine.includes(l)) &&
+      cue.theirs.every((l) => selOpp.includes(l)),
+  );
+
+  // 入力を受けられるようになった瞬間だけを知らせる（あそびかたの一行の拍）
+  let wasReady = false;
+  $effect(() => {
+    const now = inputOk;
+    if (now && !wasReady) onReady?.();
+    wasReady = now;
+  });
+
   function sleep(ms: number) {
     return new Promise((r) => setTimeout(r, ms));
   }
+  let peeked = $state<{ mine: CardV[]; theirs: CardV[] } | null>(null);
   function refresh() {
     view = session.view;
+    peeked = peek?.() ?? null;
   }
 
   function myFaceUp(l: number) {
@@ -671,7 +709,6 @@
     busy = false;
     acting = false;
     live = true;
-    onReady?.();
     void pump();
   }
 
@@ -751,6 +788,8 @@
             selected={selOpp.includes(l as Lane)}
             selectable={oppSelectable || selOpp.includes(l as Lane)}
             pulse={scene === 'preview'}
+            beckon={cueOpp.includes(l as Lane)}
+            peek={scene === 'magic' && peeked ? peeked.theirs[l] : null}
             owner="opp"
             verdict={verdictFor(l as Lane, 'opp')}
             onclick={() => pickOpp(l as Lane)}
@@ -794,6 +833,8 @@
             selected={selMine.includes(l as Lane)}
             selectable={inputOk}
             pulse={scene === 'preview'}
+            beckon={cueMine.includes(l as Lane)}
+            peek={scene === 'magic' && peeked ? peeked.mine[l] : null}
             owner="me"
             verdict={verdictFor(l as Lane, 'me')}
             onclick={() => pickMine(l as Lane)}
@@ -818,14 +859,21 @@
             <button
               class="act"
               class:spent={xswapSpent}
+              class:beckon={cueReady && cue?.press === actLabel}
               disabled={!canAct}
               onclick={() => act(true)}>{actLabel}</button
             >
-            <button class="act" disabled={!canBluff} onclick={() => act(false)}
-              >ぶらふ</button
+            <button
+              class="act"
+              class:beckon={cueReady && cue?.press === 'ぶらふ'}
+              disabled={!canBluff}
+              onclick={() => act(false)}>ぶらふ</button
             >
-            <button class="act" disabled={!view.canPass} onclick={passAct}
-              >ぱす</button
+            <button
+              class="act"
+              class:beckon={cueReady && cue?.press === 'ぱす'}
+              disabled={!view.canPass}
+              onclick={passAct}>ぱす</button
             >
           </div>
         {/if}
@@ -1081,6 +1129,25 @@
     letter-spacing: 0.12em;
     white-space: nowrap;
     transition: opacity 150ms ease, transform 120ms ease;
+  }
+  /* あそびかた：札が揃ったら，押すボタンが呼ぶ */
+  .act.beckon {
+    border-color: var(--kin);
+    animation: act-beckon 1.5s ease-in-out infinite;
+  }
+  @keyframes act-beckon {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(201, 162, 39, 0); }
+    50% {
+      box-shadow:
+        0 0 0 2px var(--kin),
+        0 0 16px rgba(201, 162, 39, 0.35);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .act.beckon {
+      animation: none;
+      box-shadow: 0 0 0 2px var(--kin);
+    }
   }
   /* 「もうつかえない」は他より長いので，枠を保ったまま字を詰める */
   .act.spent {

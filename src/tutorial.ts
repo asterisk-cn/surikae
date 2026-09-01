@@ -1,7 +1,8 @@
 // あそびかた：台本つきの一局．
 // 盤はCpuSessionと同じSessionとして振る舞うので，Game.svelteは普段どおり動く．
-// 違うのは二点だけ：配りが固定であることと，台本の手以外は受け取らないこと．
-// 説明は文章ではなく，いま押すものを一行で指す（Guide）．
+// 違うのは三点：配りが固定であること，台本の手以外は受け取らないこと，
+// そして4つの手を続けて触らせるあいだ手番を渡さないこと（説明の順を守るため）．
+// 説明は文章にせず，押す札とボタンを盤の上で光らせて指す．
 
 import {
   applyAction,
@@ -25,11 +26,13 @@ import {
   type SessionEvent,
 } from './session.ts';
 
-/** 盤の下に出る一行．文にはせず，選ぶものと押すものだけを指す */
+/** 盤の下に出る一行と，盤の上で光らせるもの．
+ *  札の位置は言葉にせず，その札自身を明滅させて指す */
 export type Guide = {
   who: 'me' | 'opp';
-  lead?: string; // 選ぶ／押すに収まらないときだけ，一行をそのまま書く
-  pick?: string; // 選ぶ札（自分の手番だけ）
+  lead?: string; // 押すものに収まらないときだけ，一行をそのまま書く
+  mine?: Lane[]; // 光らせる自分の札
+  theirs?: Lane[]; // 光らせる相手の札
   press?: string; // 押すボタン／相手が打った手の名前
   note?: string; // 添える一言
 };
@@ -39,75 +42,80 @@ type Step = {
   action: Action;
   /** ヤマから引く札．台本どおりに引かせるため，山の中の位置から乱数を逆算する */
   draw?: Card;
+  /** この手のあとも自分の手番のままにする（4つの手を続けて触らせる間だけ） */
+  keepTurn?: boolean;
+  /** この手を最後に，伏せた札の透かしを消す */
+  endsPeek?: boolean;
 };
 
-// 配りは固定．自分の合計が小さいので先手も自分になる（14 < 16）
-const MY_HAND: Card[] = [5, 8, 1];
-const OPP_HAND: Card[] = [7, 3, 6];
-const PILE: Card[] = [2, 4, 9];
+// 配りは固定．自分の合計が小さいので先手も自分になる（14 < 18）
+const MY_HAND: Card[] = [5, 1, 8];
+const OPP_HAND: Card[] = [9, 3, 6];
+const PILE: Card[] = [2, 4, 7];
 
-/** 台本．自分の手は「いれかえ→ひきなおし→ぶらふ→すりかえ→ぱす」の順に
- *  一度ずつ触る．相手の手はその間に挟まり，最後は2-1で自分が勝つ */
+/** 台本．まず4つの手を続けて触り（そのあいだ手番は渡さない），
+ *  相手の番を一度だけ挟んでから，ぱすで開示して終わる．
+ *  盤の上は 1負2勝 で終わる（9には勝てないまま） */
 const SCRIPT: Step[] = [
   {
     guide: {
       who: 'me',
-      pick: 'ひだり ＋ まんなか',
+      mine: [0, 1],
       press: 'いれかえ',
-      note: 'じぶんの 2まい',
+      note: 'じぶんの2まい　なかみが いれかわる',
     },
     action: { type: 'swap', lanes: [0, 1] },
-  },
-  {
-    guide: {
-      who: 'opp',
-      press: 'すりかえ',
-      note: 'ひだりが しょうたい ふめいに',
-    },
-    action: { type: 'xswap', mine: 2, theirs: 0 },
+    keepTurn: true,
   },
   {
     guide: {
       who: 'me',
-      pick: 'みぎ',
+      mine: [0],
       press: 'ひきなおし',
-      note: 'ひいた札は 1びょうだけ みえる',
+      note: 'ヤマと とりかえ　ひいた札は 1びょうだけ みえる',
     },
-    action: { type: 'change', lane: 2 },
-    draw: 9,
-  },
-  {
-    guide: { who: 'opp', press: 'ふるえ', note: 'ほんもの？ うそ？' },
-    action: { type: 'bluff', lanes: [0], foreign: 1 },
+    action: { type: 'change', lane: 0 },
+    draw: 7,
+    keepTurn: true,
   },
   {
     guide: {
       who: 'me',
-      pick: 'みぎ ＋ あいての まんなか',
+      mine: [1],
+      theirs: [2],
+      press: 'すりかえ',
+      note: 'ふせたまま こうかん　1きょくに 1かいだけ なので ちゅうい',
+    },
+    action: { type: 'xswap', mine: 1, theirs: 2 },
+    keepTurn: true,
+  },
+  {
+    guide: {
+      who: 'me',
+      mine: [2],
+      theirs: [1],
       press: 'ぶらふ',
-      note: '札は うごかない ふるえだけ',
+      note: '札は うごかない　ふるえだけ おこす',
     },
     action: { type: 'bluff', lanes: [2], foreign: 1 },
   },
   {
-    guide: { who: 'opp', press: 'ひきなおし', note: 'あいての札も 1びょう みえる' },
-    action: { type: 'change', lane: 1 },
-    draw: 4,
+    guide: {
+      who: 'opp',
+      press: 'ぶらふ',
+      note: 'あいても ぶらふ が できる　ほんものと 見わけはつかない',
+    },
+    action: { type: 'bluff', lanes: [0], foreign: 1 },
+    endsPeek: true,
   },
   {
     guide: {
       who: 'me',
-      pick: 'ひだり ＋ あいての ひだり',
-      press: 'すりかえ',
-      note: '1きょくに 1かいだけ',
+      press: 'ぱす',
+      note: 'そのばで けっちゃく　6まいが ひらく',
     },
-    action: { type: 'xswap', mine: 0, theirs: 0 },
+    action: { type: 'pass' },
   },
-  {
-    guide: { who: 'opp', press: 'いれかえ', note: 'ふるえは 2つ' },
-    action: { type: 'swap', lanes: [0, 2] },
-  },
-  { guide: { who: 'me', press: 'ぱす', note: 'そのばで けっちゃく' }, action: { type: 'pass' } },
 ];
 
 /** 手の種類＝盤のボタンの名前 */
@@ -152,10 +160,9 @@ function sameAction(a: Action, b: Action): boolean {
   }
 }
 
-/** 演出が終わるまで次の札を出さないための待ち．引き直しだけ長い */
+/** 自分の演出が終わるころに相手が動きだすための待ち．引き直しだけ長い */
 function beatOf(a: Action): number {
   if (a.type === 'change') return 2600;
-  if (a.type === 'pass') return 700;
   return 1700;
 }
 
@@ -167,6 +174,8 @@ export class TutorialSession implements Session {
   private guide: Guide | null = null;
   private guideSubs = new Set<(g: Guide | null) => void>();
   private timers: ReturnType<typeof setTimeout>[] = [];
+  /** 透かし．手の効き目を見せるため，相手のぶらふまでは数字を薄く出す */
+  private peekOn = true;
   readonly me: PlayerId = 0;
 
   constructor() {
@@ -219,7 +228,9 @@ export class TutorialSession implements Session {
       canFakeXswap:
         this.s.current === this.me &&
         ([0, 1, 2] as Lane[]).some((m) =>
-          ([0, 1, 2] as Lane[]).some((t) => canFakeXswap(this.s, m, t, this.cfg)),
+          ([0, 1, 2] as Lane[]).some((t) =>
+            canFakeXswap(this.s, m, t, this.cfg),
+          ),
         ),
       canChange: this.s.pile.length > 0,
       pile: this.s.pile.slice(),
@@ -233,14 +244,22 @@ export class TutorialSession implements Session {
     this.setGuide({
       who: 'me',
       lead: '3びょう おぼえる',
-      note: 'じぶんの札も ふせられる',
+      note: 'じぶんの札も ふせられる　あとは きおくだけ',
     });
   }
 
-  /** 盤が手番を始めたところで最初の一行に差し替える．
-   *  配りの長さは演出しだいなので，時間ではなく盤の合図で切り替える */
-  begin() {
-    this.setGuide(SCRIPT[this.i]?.guide ?? null);
+  /** 伏せた札に透かす数字．消えたあとはnull（記憶だけが頼りになる） */
+  peek() {
+    return this.peekOn
+      ? { mine: this.s.hands[0].slice(), theirs: this.s.hands[1].slice() }
+      : null;
+  }
+
+  /** 盤が自分の入力を受けられるようになったところで，その手の一行を出す．
+   *  配りも演出も長さが場面で変わるので，時間ではなく盤の合図に合わせる */
+  ready() {
+    const step = SCRIPT[this.i];
+    if (step?.guide.who === 'me') this.setGuide(step.guide);
   }
 
   /** 台本の手だけを受け取る．違う手は短く断って，盤はそのまま */
@@ -258,22 +277,26 @@ export class TutorialSession implements Session {
 
     this.s = applyAction(this.s, a, this.rngFor(step.draw), this.cfg);
     this.i += 1;
+    if (step.endsPeek) this.peekOn = false;
     if (this.s.phase === 'reveal') {
       this.setGuide(null);
       this.finish(a.type !== 'pass');
       return;
     }
+    // 4つの手を続けて触らせる間は，手番を渡さない
+    if (step.keepTurn) this.s = { ...this.s, current: this.me };
     this.setGuide(null);
-    this.later(() => this.playOpp(), beatOf(a));
+    if (!step.keepTurn) this.later(() => this.playOpp(), beatOf(a));
   }
 
-  /** 相手の手．台本どおりに打ち，同じ拍で一行を出す */
+  /** 相手の番．台本どおりに打つ．一行は震えと同じ拍で出す */
   private playOpp() {
     const step = SCRIPT[this.i];
     if (!step || step.guide.who !== 'opp' || this.s.phase !== 'magic') return;
     this.setGuide(step.guide);
     this.s = applyAction(this.s, step.action, this.rngFor(step.draw), this.cfg);
     this.i += 1;
+    if (step.endsPeek) this.peekOn = false;
     const rec = this.s.shakeLog[this.s.shakeLog.length - 1];
     this.em.emit({
       t: 'oppShake',
@@ -281,10 +304,7 @@ export class TutorialSession implements Session {
       myLanes: foreignOf(step.action),
       ...(rec?.drew !== undefined ? { drew: rec.drew } : {}),
     });
-    this.later(
-      () => this.setGuide(SCRIPT[this.i]?.guide ?? null),
-      beatOf(step.action),
-    );
+    // 次の一行は，盤が入力を受けられるようになってから（ready）
   }
 
   private finish(byCap: boolean) {
@@ -306,6 +326,7 @@ export class TutorialSession implements Session {
     this.clearTimers();
     this.s = this.freshState();
     this.i = 0;
+    this.peekOn = true;
     this.setGuide(null);
     this.start();
   }
