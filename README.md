@@ -4,7 +4,9 @@
 
 ## 遊び方
 
-メニューの「あそびかた」に同じものが入っている（`src/lib/Howto.svelte`）．
+メニューの「あそびかた」は，台本つきの一局を本物の盤で自分で打つ
+（`src/tutorial.ts`）．配りは固定で，いま選ぶ札と押すボタンが盤の下に一行で
+出る．台本以外の手は短く断られるので，一局のうちに5つの手を一度ずつ触ることになる．
 
 札は1〜9が一枚ずつ．3枚ずつ配って残り3枚がヤマ．開始時に6枚を3秒だけ
 相互公開してから，自分の3枚も含めて伏せる．以降，盤の札は見えず，
@@ -63,9 +65,11 @@ pnpm run deploy
 ```
 src/engine.ts     ルール（純粋TS・UI非依存）
 src/bot.ts        CPU（分布での信念モデル＋期待勝率の最大化）
+src/tutorial.ts   あそびかた：台本つきの一局（Sessionとして盤に渡す）
 src/session.ts    セッション抽象：CpuSession / NetSession，
                   Transport：BroadcastChannel / WebSocket
 src/lib/Game.svelte  盤面（Sessionだけを相手にする）
+src/lib/Tutorial.svelte  あそびかた：台本セッションと盤をつなぐ
 src/App.svelte    メニュー
 src/sim.ts        ヘッドレスシミュレータ
 src/test-net.ts   対人プロトコルの整合性テスト

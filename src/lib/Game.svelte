@@ -19,7 +19,16 @@
   let {
     session,
     onExit,
-  }: { session: Session; onExit: () => void } = $props();
+    hint = null,
+    onReady = undefined,
+  }: {
+    session: Session;
+    onExit: () => void;
+    /** あそびかたの一行．普段の対局ではnull */
+    hint?: { lead: string; note?: string } | null;
+    /** 配りと先攻の合図が済み，手番が始まったところで呼ばれる */
+    onReady?: (() => void) | undefined;
+  } = $props();
 
   const SHAKE_MS = 950; // 全アクション共通の演出長（固定）
   const FLIP_MS = 560; // Card.svelte の .flip と揃える
@@ -406,7 +415,17 @@
     busy = true;
     acting = true;
     clearSel();
-    session.myAction({ type: 'pass' });
+    try {
+      session.myAction({ type: 'pass' });
+    } catch (err) {
+      toast = err instanceof Error ? err.message : 'そのてはうてない';
+      await sleep(1300);
+      toast = '';
+      busy = false;
+      acting = false;
+      void pump();
+      return;
+    }
     toast = 'ぱす';
     await sleep(600); // 自分の手は分かっているので短く．開示を待たせない
     toast = '';
@@ -652,6 +671,7 @@
     busy = false;
     acting = false;
     live = true;
+    onReady?.();
     void pump();
   }
 
@@ -784,6 +804,12 @@
     </section>
 
     <section class="dock">
+      {#if hint && scene !== 'reveal' && !banner}
+        <p class="guide" class:opp={hint.lead.startsWith('あいて')}>
+          {hint.lead}
+        </p>
+        {#if hint.note}<p class="guide-note">{hint.note}</p>{/if}
+      {/if}
       {#if toast}
         <p class="toast">{toast}</p>
       {:else if scene === 'magic'}
@@ -1014,6 +1040,21 @@
   @keyframes breathe {
     0%, 100% { opacity: 0.45; }
     50% { opacity: 1; }
+  }
+  /* あそびかたの一行．手番の色（自分＝藍鼠／相手＝朱）で誰の番かを兼ねる */
+  .guide {
+    font-family: var(--font-display);
+    font-size: 0.95rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--ai);
+  }
+  .guide.opp { color: var(--shu); }
+  .guide-note {
+    font-size: 0.72rem;
+    letter-spacing: 0.08em;
+    color: rgba(236, 229, 211, 0.45);
+    margin-top: -4px;
   }
   .toast {
     font-family: var(--font-display);

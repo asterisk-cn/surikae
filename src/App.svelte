@@ -1,6 +1,6 @@
 <script lang="ts">
   import Game from './lib/Game.svelte';
-  import Howto from './lib/Howto.svelte';
+  import Tutorial from './lib/Tutorial.svelte';
   import {
     CpuSession,
     NetSession,
@@ -14,7 +14,7 @@
   let err = $state('');
   let connecting = $state(false);
   let devLocal = $state(false);
-  let howto = $state(false);
+  let howto = $state(false); // あそびかた（台本つきの一局）
 
   function startCpu() {
     const s = new CpuSession();
@@ -60,7 +60,7 @@
     <Game {session} onExit={exit} />
   {/key}
 {:else if howto}
-  <Howto onBack={() => (howto = false)} />
+  <Tutorial onExit={() => (howto = false)} />
 {:else}
   <main class="menu">
     <h1>すりかえ</h1>
