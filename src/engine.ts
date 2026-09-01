@@ -43,6 +43,10 @@ export type Result = {
 export type GameState = {
   hands: [Card[], Card[]]; // 真の値（隠匿情報）
   initialHands: [Card[], Card[]]; // 初期公開値（両者の共有知識）
+  /** ヤマの残り．1〜9が一枚ずつしかないので，6枚を配った残りの3枚がこれ．
+   *  初期手札は相互公開されるから，山に何が残っているかも両者の共有知識．
+   *  引いた札は山から消え，捨てた札は山へ戻らず場から抜ける（＝一枚ずつを保つ）． */
+  pile: Card[];
   /** known[p][lane] … プレイヤーpが自分のそのレーンの値を知っているか．
    *  初期公開で全てtrue．ヤマとの交換でtrue，相手との交換で双方falseになる．
    *  見せかけの交換でも渡された側はfalseになる（本物と区別できないため）． */
@@ -67,7 +71,7 @@ export type Config = {
 
 export const DEFAULT_CONFIG: Config = {
   cardMin: 1,
-  cardMax: 10,
+  cardMax: 9,
   minActionsBeforePass: 1,
   maxActionsPerPlayer: 8,
   xswapPerPlayer: 1,
@@ -76,13 +80,34 @@ export const DEFAULT_CONFIG: Config = {
 
 export type Rng = () => number;
 
-export function drawCard(rng: Rng, cfg: Config): Card {
-  return cfg.cardMin + Math.floor(rng() * (cfg.cardMax - cfg.cardMin + 1));
+/** 山札：cardMin〜cardMax を一枚ずつ */
+export function makeDeck(cfg: Config): Card[] {
+  const d: Card[] = [];
+  for (let v = cfg.cardMin; v <= cfg.cardMax; v++) d.push(v);
+  return d;
+}
+
+/** 山から1枚引く．引いた札は山から消える．[引いた札, 残りの山] を返す */
+export function drawFromPile(pile: Card[], rng: Rng): [Card, Card[]] {
+  const rest = pile.slice();
+  const [c] = rest.splice(Math.floor(rng() * rest.length), 1);
+  return [c, rest];
+}
+
+/** ヤマから引けるか．尽きたら「ひきなおし」は打てない */
+export function canChange(s: GameState): boolean {
+  return s.pile.length > 0;
 }
 
 export function createGame(rng: Rng, cfg: Config = DEFAULT_CONFIG): GameState {
-  const h0 = [drawCard(rng, cfg), drawCard(rng, cfg), drawCard(rng, cfg)];
-  const h1 = [drawCard(rng, cfg), drawCard(rng, cfg), drawCard(rng, cfg)];
+  const deck = makeDeck(cfg);
+  if (deck.length < 7) throw new Error('やまが6枚の配り札と残りをまかなえない');
+  for (let i = deck.length - 1; i > 0; i--) {
+    const j = Math.floor(rng() * (i + 1));
+    [deck[i], deck[j]] = [deck[j], deck[i]];
+  }
+  const h0 = deck.slice(0, 3);
+  const h1 = deck.slice(3, 6);
   const t0 = h0[0] + h0[1] + h0[2];
   const t1 = h1[0] + h1[1] + h1[2];
 
@@ -95,6 +120,7 @@ export function createGame(rng: Rng, cfg: Config = DEFAULT_CONFIG): GameState {
   return {
     hands: [h0.slice(), h1.slice()],
     initialHands: [h0.slice(), h1.slice()],
+    pile: deck.slice(6),
     known: [
       [true, true, true],
       [true, true, true],
@@ -175,7 +201,8 @@ export function legalActions(
   for (const m of [0, 1, 2] as Lane[])
     for (const t of [0, 1, 2] as Lane[])
       if (canXswap(s, m, t, cfg)) out.push({ type: 'xswap', mine: m, theirs: t });
-  for (const l of [0, 1, 2] as Lane[]) out.push({ type: 'change', lane: l });
+  if (canChange(s))
+    for (const l of [0, 1, 2] as Lane[]) out.push({ type: 'change', lane: l });
   for (const p of pairs) out.push({ type: 'bluff', lanes: [p[0], p[1]] });
   // 見せかけの交換．本物の回数を使い切っていても打てる
   for (const m of [0, 1, 2] as Lane[])
@@ -221,6 +248,7 @@ export function applyAction(
     ...s,
     hands: [s.hands[0].slice(), s.hands[1].slice()] as [Card[], Card[]],
     known: [s.known[0].slice(), s.known[1].slice()] as [boolean[], boolean[]],
+    pile: s.pile.slice(),
     shakeLog: s.shakeLog.slice(),
     eventLog: s.eventLog.slice(),
     actionCount: [s.actionCount[0], s.actionCount[1]] as [number, number],
@@ -272,8 +300,12 @@ export function applyAction(
     next.known[me][a.mine] = false;
     next.known[opp][a.theirs] = false;
   } else if (a.type === 'change') {
-    // ヤマとの交換：引いた札は一瞬だけ両者に開示される
-    next.hands[me][a.lane] = drawCard(rng, cfg);
+    // ヤマとの交換：引いた札は一瞬だけ両者に開示される．
+    // 捨てた札は山へ戻さず場から抜く（1〜9が一枚ずつという約束を保つ）
+    if (!canChange(s)) throw new Error('やまがもうない');
+    const [c, rest] = drawFromPile(next.pile, rng);
+    next.hands[me][a.lane] = c;
+    next.pile = rest;
     next.known[me][a.lane] = true;
   } else if (a.type === 'bluff' && a.foreign !== undefined) {
     // 見せかけの交換：札は動かないが，渡された側は本物と区別できないので

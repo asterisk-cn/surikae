@@ -10,6 +10,7 @@
 
 import {
   DEFAULT_CONFIG,
+  makeDeck,
   type Action,
   type BotView,
   type Card,
@@ -38,6 +39,25 @@ export type Dist = number[]; // 添字0が cardMin
 function deckDist(cfg: Config): Dist {
   const n = cfg.cardMax - cfg.cardMin + 1;
   return new Array(n).fill(1 / n);
+}
+/** 山の残り．公開情報だけから求まる（初期の6枚と，引かれて開示された札） */
+export function restPile(v: BotView, cfg: Config): Card[] {
+  const rest = makeDeck(cfg);
+  const take = (c: Card) => {
+    const i = rest.indexOf(c);
+    if (i >= 0) rest.splice(i, 1);
+  };
+  for (const c of v.myInitial) take(c);
+  for (const c of v.oppInitial) take(c);
+  for (const r of v.shakeLog) if (r.drew !== undefined) take(r.drew);
+  return rest;
+}
+
+/** ひきなおしで出る札の分布．1〜9が一枚ずつなので，山の残りの一様分布になる */
+function pileDist(pile: Card[], cfg: Config): Dist {
+  const d = new Array(cfg.cardMax - cfg.cardMin + 1).fill(0);
+  for (const c of pile) d[c - cfg.cardMin] += 1 / pile.length;
+  return d;
 }
 function pointDist(v: Card, cfg: Config): Dist {
   const d = new Array(cfg.cardMax - cfg.cardMin + 1).fill(0);
@@ -197,10 +217,11 @@ function afterAction(
   b: Belief,
   a: Action,
   cfg: Config,
+  drawDist: Dist,
 ): { mine: Dist[]; opp: Dist[] } {
   const mine = b.mine.slice();
   const opp = b.opp.slice();
-  if (a.type === 'change') mine[a.lane] = deckDist(cfg);
+  if (a.type === 'change') mine[a.lane] = drawDist;
   else if (a.type === 'swap') {
     const [x, y] = a.lanes;
     [mine[x], mine[y]] = [mine[y], mine[x]];
@@ -247,12 +268,14 @@ export function makeGreedyBot(opts?: {
 
   return (v, rng, cfg) => {
     const b = believe(v, cfg, pReal);
+    // 引けば何が出るかは山の残りで決まる．重複がないので当たり外れが読める
+    const drawDist = pileDist(restPile(v, cfg), cfg);
     const now = winProb(b.mine, b.opp);
 
     let best: { a: Action; val: number } | null = null;
     for (const a of v.legal) {
       if (a.type === 'bluff' || a.type === 'pass') continue;
-      const { mine, opp } = afterAction(b, a, cfg);
+      const { mine, opp } = afterAction(b, a, cfg, drawDist);
       const val = winProb(mine, opp);
       if (!best || val > best.val) best = { a, val };
     }

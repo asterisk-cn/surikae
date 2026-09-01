@@ -11,7 +11,8 @@ import {
   canXswap,
   canFakeXswap,
   judgeHands,
-  drawCard,
+  makeDeck,
+  drawFromPile,
   DEFAULT_CONFIG,
   type GameState,
   type Action,
@@ -49,6 +50,9 @@ export type ClientView = {
   canPass: boolean;
   canXswap: boolean; // 本物の交換が打てるか
   canFakeXswap: boolean; // 奪うふりが打てるか（回数を使い切っていても可）
+  canChange: boolean; // ヤマに札が残っているか（尽きたらひきなおしは打てない）
+  /** ヤマの残り．初期手札6枚が公開されている以上，残りが何かも共有知識なので見せてよい */
+  pile: Card[];
   turn: number;
 };
 
@@ -227,6 +231,8 @@ export class CpuSession implements Session {
             canFakeXswap(this.s, m, t, this.cfg),
           ),
         ),
+      canChange: this.s.pile.length > 0,
+      pile: this.s.pile.slice(),
       turn: this.s.turn,
     };
   }
@@ -307,6 +313,9 @@ export class NetSession implements Session {
   private initial: [Card[], Card[]] | null = null;
   private myHand: Card[] = [];
   private myKnown: boolean[] = [true, true, true];
+  /** ヤマの残り．初期手札は相互公開されるので両者が同じ内容を持てる．
+   *  引いた札は drew で必ず相手にも伝わるから，以後もずれない */
+  private pile: Card[] = [];
   private current: PlayerId = 0;
   private turn = 0;
   private actionCount: [number, number] = [0, 0];
@@ -341,6 +350,8 @@ export class NetSession implements Session {
         this.actionCount[1] >= this.cfg.minActionsBeforePass,
       canXswap: this.xswapUsed[this.me] < this.cfg.xswapPerPlayer,
       canFakeXswap: true, // コウは組み合わせごとの判定なので，ここでは開けておく
+      canChange: this.pile.length > 0,
+      pile: this.pile.slice(),
       turn: this.turn,
     };
   }
@@ -407,6 +418,13 @@ export class NetSession implements Session {
 
   private beginWith(hands: [Card[], Card[]], first: PlayerId) {
     this.initial = [hands[0].slice(), hands[1].slice()];
+    // 配られた6枚を山から除く．初期手札は公開なので両者が同じ山を得る
+    const rest = makeDeck(this.cfg);
+    for (const c of [...hands[0], ...hands[1]]) {
+      const i = rest.indexOf(c);
+      if (i >= 0) rest.splice(i, 1);
+    }
+    this.pile = rest;
     this.myHand = hands[this.me].slice();
     this.myKnown = [true, true, true];
     this.current = first;
@@ -459,7 +477,10 @@ export class NetSession implements Session {
     }
     // ローカルで解決してから震えだけ送る
     if (a.type === 'change') {
-      this.myHand[a.lane] = drawCard(this.rng, this.cfg);
+      if (this.pile.length === 0) return; // やまがもうない
+      const [c, rest] = drawFromPile(this.pile, this.rng);
+      this.myHand[a.lane] = c; // 捨てた札は山へ戻らず場から抜ける
+      this.pile = rest;
       this.myKnown[a.lane] = true; // 引いた札は自分だけが見る
     } else if (a.type === 'swap') {
       const [x, y] = a.lanes;
@@ -504,6 +525,11 @@ export class NetSession implements Session {
       this.lastXswap = { player: m.player, mine: m.lanes[0], theirs: m.foreign };
       this.em.emit({ t: 'oppShake', lanes: m.lanes, myLanes: [m.foreign] });
     } else {
+      if (m.drew !== undefined) {
+        // 相手が引いた札を山から抜く．これで双方の山が一致し続ける
+        const i = this.pile.indexOf(m.drew);
+        if (i >= 0) this.pile.splice(i, 1);
+      }
       this.em.emit({
         t: 'oppShake',
         lanes: m.lanes,

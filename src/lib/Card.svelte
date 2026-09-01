@@ -7,8 +7,9 @@
     selected = false,
     selectable = false,
     pulse = false,
-    owner = 'me', // 'me' | 'opp'
+    owner = 'me', // 'me' | 'opp' | 'none'（noneはまだ誰の札でもない＝配る前の山）
     verdict = null, // 'win' | 'lose' | 'tie' | null
+    hidden = false, // 入れ替えの最中，スロットを空けるために姿を消す
     note = '',
     onclick = undefined,
   }: {
@@ -18,8 +19,9 @@
     selected?: boolean;
     selectable?: boolean;
     pulse?: boolean;
-    owner?: 'me' | 'opp';
+    owner?: 'me' | 'opp' | 'none';
     verdict?: 'win' | 'lose' | 'tie' | null;
+    hidden?: boolean;
     note?: string;
     onclick?: (() => void) | undefined;
   } = $props();
@@ -32,6 +34,7 @@
   class:selectable
   class:pulse
   class:faceup={faceUp}
+  class:hidden
   class:win={verdict === 'win'}
   class:lose={verdict === 'lose'}
   class:tie={verdict === 'tie'}
@@ -60,6 +63,8 @@
     -webkit-tap-highlight-color: transparent;
   }
   .card:disabled { cursor: default; }
+  /* 入れ替えの最中だけ姿を消す．場所は取ったまま */
+  .card.hidden { opacity: 0; }
   .card.selected { transform: translateY(-14px); }
 
   .flip {
