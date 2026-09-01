@@ -1,5 +1,6 @@
 <script lang="ts">
   import Game from './lib/Game.svelte';
+  import Howto from './lib/Howto.svelte';
   import {
     CpuSession,
     NetSession,
@@ -13,6 +14,7 @@
   let err = $state('');
   let connecting = $state(false);
   let devLocal = $state(false);
+  let howto = $state(false);
 
   function startCpu() {
     const s = new CpuSession();
@@ -57,6 +59,8 @@
   {#key session}
     <Game {session} onExit={exit} />
   {/key}
+{:else if howto}
+  <Howto onBack={() => (howto = false)} />
 {:else}
   <main class="menu">
     <h1>すりかえ</h1>
@@ -77,6 +81,8 @@
       >
       {#if err}<p class="err">{err}</p>{/if}
     </div>
+
+    <button class="howtolink" onclick={() => (howto = true)}>あそびかた</button>
 
     <!-- 同一ブラウザの2タブで繋ぐ検証用．本番ビルドには出さない -->
     {#if import.meta.env.DEV}
@@ -184,6 +190,14 @@
   }
   .note { color: rgba(236, 229, 211, 0.4); }
   .err { color: var(--shu); }
+  .howtolink {
+    font-size: 0.78rem;
+    color: var(--washi-dim);
+    letter-spacing: 0.22em;
+    text-indent: 0.22em;
+    padding: 4px 2px;
+    border-bottom: 1px solid rgba(236, 229, 211, 0.25);
+  }
   .devlink {
     font-size: 0.7rem;
     color: rgba(236, 229, 211, 0.35);
