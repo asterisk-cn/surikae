@@ -53,6 +53,7 @@
   let toast = $state('');
   let banner = $state(''); // 先攻／後攻を画面中央に横切らせる
   let fin = $state<Extract<SessionEvent, { t: 'finished' }> | null>(null);
+  let againWait = $state(false); // 対人：相手も押すまで配り直されない
 
   /** 配りの演出で飛ばす札．盤の実スロットを実測してそこへ運ぶ */
   type Ghost = {
@@ -279,6 +280,22 @@
       q.shift();
       if (e.t === 'start') {
         refresh();
+        // 二局目以降：前の局の名残を消してから配りに入る
+        fin = null;
+        flipped = [false, false, false];
+        shakingMe = [false, false, false];
+        shakingOpp = [false, false, false];
+        selMine = [];
+        selOpp = [];
+        swapMe = null;
+        swapOpp = null;
+        ghosts = [];
+        toast = '';
+        banner = '';
+        live = false;
+        busy = false;
+        skipDeal = false;
+        againWait = false;
         // 配り終わるまで盤の6枚は伏せたまま．表に返すのは配りの後
         openMe = [false, false, false];
         openOpp = [false, false, false];
@@ -638,6 +655,13 @@
     void pump();
   }
 
+  /** もう一局．対人では相手も押したところで配り直される（それまでは待つ） */
+  function again() {
+    if (againWait) return;
+    againWait = true;
+    session.again();
+  }
+
   async function revealSequence() {
     scene = 'reveal';
     await sleep(220);
@@ -782,7 +806,9 @@
       {:else if verdictText}
         <p class="verdict">{verdictText}</p>
         <p class="score">{fin?.score[0]} - {fin?.score[1]}</p>
-        <button class="primary" onclick={onExit}>もどる</button>
+        <button class="primary" disabled={againWait} onclick={again}
+          >{againWait ? 'あいてをまつ' : 'もういちど'}</button
+        >
       {/if}
     </section>
   {/if}

@@ -60,6 +60,8 @@ export interface Session {
   readonly view: ClientView;
   /** 自分の行動．change/swapは内部で解決され，viewに反映される */
   myAction(a: Action): void;
+  /** もう一局．対人では双方が押したところで配り直される */
+  again(): void;
   subscribe(cb: (e: SessionEvent) => void): () => void;
   close(): void;
 }
@@ -87,7 +89,9 @@ export type NetMsg =
       gave: Card;
     }
   | { t: 'xack'; player: PlayerId; mine: Lane; took: Card }
-  | { t: 'reveal'; player: PlayerId; hand: Card[]; log: Action[] };
+  | { t: 'reveal'; player: PlayerId; hand: Card[]; log: Action[] }
+  // 双方の again が揃ったところで host が配り直す
+  | { t: 'again'; player: PlayerId };
 
 export interface Transport {
   send(msg: NetMsg): void;
@@ -249,6 +253,12 @@ export class CpuSession implements Session {
     else this.scheduleBot();
   }
 
+  again() {
+    if (this.timer) clearTimeout(this.timer);
+    this.s = createGame(this.rng, this.cfg);
+    this.start();
+  }
+
   private scheduleBot() {
     this.timer = setTimeout(() => {
       if (this.s.phase !== 'magic') return;
@@ -328,6 +338,8 @@ export class NetSession implements Session {
   private oppReveal: { hand: Card[]; log: Action[] } | null = null;
   private myRevealSent = false;
   private endedByCap = false;
+  private againMe = false; // もう一局．双方が押すまで配り直さない
+  private againOpp = false;
 
   constructor(role: 'host' | 'join', transport: Transport, cfg?: Config) {
     this.role = role;
@@ -413,6 +425,9 @@ export class NetSession implements Session {
     } else if (m.t === 'reveal' && m.player !== this.me) {
       this.oppReveal = { hand: m.hand, log: m.log };
       this.tryFinish();
+    } else if (m.t === 'again' && m.player !== this.me) {
+      this.againOpp = true;
+      this.tryRematch();
     }
   }
 
@@ -428,6 +443,17 @@ export class NetSession implements Session {
     this.myHand = hands[this.me].slice();
     this.myKnown = [true, true, true];
     this.current = first;
+    // 二局目以降のために，前の局の残りをここで消す
+    this.turn = 0;
+    this.actionCount = [0, 0];
+    this.myLog = [];
+    this.xswapUsed = [0, 0];
+    this.lastXswap = null;
+    this.pendingX = null;
+    this.passed = false;
+    this.oppReveal = null;
+    this.myRevealSent = false;
+    this.endedByCap = false;
     this.phase = 'magic';
     this.em.emit({ t: 'start' });
   }
@@ -564,6 +590,27 @@ export class NetSession implements Session {
       log: this.myLog.slice(),
     });
     this.tryFinish();
+  }
+
+  again() {
+    if (this.phase !== 'reveal' || this.againMe) return;
+    this.againMe = true;
+    this.t.send({ t: 'again', player: this.me });
+    this.tryRematch();
+  }
+
+  /** 双方が押していれば，hostが配り直してinitを送る（joinはそれを待つ） */
+  private tryRematch() {
+    if (!this.againMe || !this.againOpp) return;
+    this.againMe = false;
+    this.againOpp = false;
+    if (this.role === 'host') {
+      const g = createGame(this.rng, this.cfg);
+      this.t.send({ t: 'init', hands: g.initialHands, first: g.current });
+      this.beginWith(g.initialHands, g.current);
+    } else {
+      this.phase = 'lobby'; // initを受け取れる状態に戻す
+    }
   }
 
   private tryFinish() {

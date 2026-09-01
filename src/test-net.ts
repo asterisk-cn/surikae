@@ -41,16 +41,15 @@ function rndAction(canPass: boolean, r: () => number, canX: boolean): Action {
 async function tick() { await new Promise((res) => setTimeout(res, 0)); }
 
 let fails = 0;
-for (let g = 0; g < 500; g++) {
-  const [ta, tb] = pipePair();
-  const host = new NetSession('host', ta);
-  const join = new NetSession('join', tb);
-  const fins: Record<string, Extract<SessionEvent, { t: 'finished' }>> = {};
-  host.subscribe((e) => { if (e.t === 'finished') fins.host = e; });
-  join.subscribe((e) => { if (e.t === 'finished') fins.join = e; });
-  host.start(); join.start();
-  await tick(); await tick();
+type Fin = Extract<SessionEvent, { t: 'finished' }>;
 
+/** 一局を最後まで打つ．両視点の判定が一致すれば true */
+async function playRound(
+  host: NetSession,
+  join: NetSession,
+  fins: Record<string, Fin>,
+  label: string,
+): Promise<boolean> {
   const r = Math.random;
   for (let step = 0; step < 40 && (!fins.host || !fins.join); step++) {
     const active = host.view.isMyTurn ? host : join.view.isMyTurn ? join : null;
@@ -59,7 +58,7 @@ for (let g = 0; g < 500; g++) {
     await tick(); await tick();
   }
 
-  if (!fins.host || !fins.join) { console.log(`game ${g}: 未決着`); fails++; continue; }
+  if (!fins.host || !fins.join) { console.log(`${label}: 未決着`); return false; }
   const h = fins.host, j = fins.join;
   const ok =
     h.score[0] === j.score[1] && h.score[1] === j.score[0] &&
@@ -69,6 +68,42 @@ for (let g = 0; g < 500; g++) {
     JSON.stringify(h.myHand) === JSON.stringify(j.oppHand) &&
     JSON.stringify(h.oppHand) === JSON.stringify(j.myHand) &&
     h.byCap === j.byCap;
-  if (!ok) { console.log(`game ${g}: 不一致`, h, j); fails++; }
+  if (!ok) console.log(`${label}: 不一致`, h, j);
+  return ok;
 }
-console.log(fails === 0 ? '500戦すべて両視点の判定が一致' : `${fails}件の不整合`);
+
+for (let g = 0; g < 500; g++) {
+  const [ta, tb] = pipePair();
+  const host = new NetSession('host', ta);
+  const join = new NetSession('join', tb);
+  const fins: Record<string, Fin> = {};
+  host.subscribe((e) => { if (e.t === 'finished') fins.host = e; });
+  join.subscribe((e) => { if (e.t === 'finished') fins.join = e; });
+  host.start(); join.start();
+  await tick(); await tick();
+
+  if (!(await playRound(host, join, fins, `game ${g}`))) { fails++; continue; }
+
+  // もう一度：同じセッションで配り直す．押す順は局ごとに入れ替える
+  delete fins.host; delete fins.join;
+  const [first, second] = g % 2 === 0 ? [host, join] : [join, host];
+  first.again();
+  await tick(); await tick();
+  if (host.view.isMyTurn || join.view.isMyTurn) {
+    console.log(`game ${g}: 片方だけで配り直った`); fails++; continue;
+  }
+  second.again();
+  await tick(); await tick();
+  if (!host.view.isMyTurn && !join.view.isMyTurn) {
+    console.log(`game ${g}: 配り直らない`); fails++; continue;
+  }
+  // 初期手札は双方が同じものを見ている
+  if (
+    JSON.stringify(host.view.myInitial) !== JSON.stringify(join.view.oppInitial) ||
+    JSON.stringify(host.view.oppInitial) !== JSON.stringify(join.view.myInitial)
+  ) {
+    console.log(`game ${g}: 二局目の配牌がずれた`); fails++; continue;
+  }
+  if (!(await playRound(host, join, fins, `game ${g} 二局目`))) { fails++; continue; }
+}
+console.log(fails === 0 ? '500戦×2局すべて両視点の判定が一致' : `${fails}件の不整合`);
