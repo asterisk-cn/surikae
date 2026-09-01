@@ -25,11 +25,12 @@
     peek = null,
     onceOnly = false,
     onTap = undefined,
+    holdPreview = false,
   }: {
     session: Session;
     onExit: () => void;
     /** あそびかたの一行．普段の対局ではnull */
-    hint?: { lead: string; note?: string; who?: 'me' | 'opp' } | null;
+    hint?: { lead: string; note?: string[]; who?: 'me' | 'opp' } | null;
     /** あそびかた：次に押す札とボタン．札が揃うまでは札を，
      *  揃ったらボタンを呼ぶ（言葉で位置を言わずに済ませる） */
     cue?: { mine: Lane[]; theirs: Lane[]; press: string } | null;
@@ -44,6 +45,8 @@
     onceOnly?: boolean;
     /** あそびかた：盤のどこかが押された．読み終えて先へ進む合図に使う */
     onTap?: (() => void) | undefined;
+    /** あそびかた：はじめの見せ合いを時間で切らず，押されるまで開けておく */
+    holdPreview?: boolean;
   } = $props();
 
   const SHAKE_MS = 950; // 全アクション共通の演出長（固定）
@@ -353,6 +356,8 @@
         live = false;
         busy = false;
         skipDeal = false;
+        tapPending = false;
+        tapWaiter = null;
         againWait = false;
         // 配り終わるまで盤の6枚は伏せたまま．表に返すのは配りの後
         openMe = [false, false, false];
@@ -699,8 +704,22 @@
   }
 
   async function previewThenCover() {
-    await sleep(PREVIEW_MS);
+    // あそびかたは，覚え終えたと自分で決めたところで伏せる
+    if (holdPreview) await waitTap();
+    else await sleep(PREVIEW_MS);
     await coverAll();
+  }
+
+  /** 次に盤が押されるまで待つ．待ち始める前に押されていたら，それを使う
+   *  （見せ合いに入った直後の一押しを取りこぼすと，先へ進めなくなる） */
+  let tapWaiter: (() => void) | null = null;
+  let tapPending = false;
+  function waitTap() {
+    if (tapPending) {
+      tapPending = false;
+      return Promise.resolve();
+    }
+    return new Promise<void>((r) => (tapWaiter = r));
   }
 
   /** 6枚を順に伏せる．ここから先は，自分の札も記憶だけが頼りになる */
@@ -764,7 +783,15 @@
 
 <svelte:window
   onpointerdown={() => {
-    if (scene === 'deal') skipDeal = true;
+    if (scene === 'deal') {
+      skipDeal = true; // 配りの最中の一押しは，配りを飛ばすためのもの
+    } else if (tapWaiter) {
+      const go = tapWaiter;
+      tapWaiter = null;
+      go();
+    } else {
+      tapPending = true;
+    }
     onTap?.();
   }}
 />
@@ -900,7 +927,9 @@
       <!-- あそびかたの一行．押すものの下に置く -->
       {#if hint && scene !== 'deal' && scene !== 'reveal' && !banner}
         <p class="guide" class:opp={hint.who === 'opp'}>{hint.lead}</p>
-        {#if hint.note}<p class="guide-note">{hint.note}</p>{/if}
+        {#each hint.note ?? [] as n}
+          <p class="guide-note">{n}</p>
+        {/each}
       {/if}
     </section>
   {/if}

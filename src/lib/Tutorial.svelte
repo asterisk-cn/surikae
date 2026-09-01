@@ -21,7 +21,7 @@
     };
   });
 
-  // 一行は台本に書いたとおりに出す．書いていなければ手の名前だけ
+  // 見出しは手の名前．その下に，何をする手なのかを置く
   let hint = $derived.by(() =>
     guide
       ? {
@@ -52,5 +52,6 @@
   onReady={() => session.ready()}
   {peek}
   onceOnly
+  holdPreview
   onTap={() => session.tap()}
 />

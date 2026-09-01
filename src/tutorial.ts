@@ -30,11 +30,11 @@ import {
  *  札の位置は言葉にせず，その札自身を明滅させて指す */
 export type Guide = {
   who: 'me' | 'opp';
-  lead?: string; // 押すものに収まらないときだけ，一行をそのまま書く
+  lead?: string; // 手の名前で言えないときだけ，見出しをそのまま書く
   mine?: Lane[]; // 光らせる自分の札
   theirs?: Lane[]; // 光らせる相手の札
-  press?: string; // 押すボタン／相手が打った手の名前
-  note?: string; // 添える一言
+  press?: string; // 押すボタン／相手が打った手の名前．そのまま見出しになる
+  note?: string[]; // 見出しの下に置く説明（1行1つ）
 };
 
 type Step = {
@@ -44,18 +44,34 @@ type Step = {
   draw?: Card;
   /** この手のあとも自分の手番のままにする（4つの手を続けて触らせる間だけ） */
   keepTurn?: boolean;
+  /** 打ったあとに出す一言．打つ前に言っても実感がないものを，ここに置く．
+   *  タップで次へ進む */
+  after?: Guide;
 };
 
-// 配りは固定．自分の合計が小さいので先手も自分になる（14 < 18）
-const MY_HAND: Card[] = [5, 1, 8];
-const OPP_HAND: Card[] = [9, 3, 6];
-const PILE: Card[] = [2, 4, 7];
+// 配りは固定．自分の合計が小さいので先手も自分になる（10 < 19）
+const MY_HAND: Card[] = [5, 3, 2];
+const OPP_HAND: Card[] = [9, 4, 6];
+const PILE: Card[] = [1, 7, 8];
 
 /** 台本．まず4つの手を続けて触り（そのあいだ手番は渡さない），
  *  相手の番を一度だけ挟んでから，ぱすで開示して終わる．
  *  盤の上は 1負2勝 で終わる（9には勝てないまま） */
 const SCRIPT: Step[] = [
   {
+    // 2 を捨てて 8 を引く．1レーン取れるようになる
+    guide: {
+      who: 'me',
+      lead: 'やまからかーどをひきなおす',
+      mine: [2],
+      press: 'ひきなおし',
+    },
+    action: { type: 'change', lane: 2 },
+    draw: 8,
+    keepTurn: true,
+  },
+  {
+    // 5 と 3 を入れ替えて，相手の 4 に 5 をぶつける
     guide: {
       who: 'me',
       lead: 'じぶんの2まいをいれかえる',
@@ -66,27 +82,18 @@ const SCRIPT: Step[] = [
     keepTurn: true,
   },
   {
-    guide: {
-      who: 'me',
-      lead: 'やまからかーどをひきなおす',
-      mine: [0],
-      press: 'ひきなおし',
-    },
-    action: { type: 'change', lane: 0 },
-    draw: 7,
-    keepTurn: true,
-  },
-  {
+    // 使い道のない 3 を渡して，相手の 6 を取り上げる
     guide: {
       who: 'me',
       lead: 'あいてのかーどとすりかえる',
-      note: 'いちどのみつかえる',
-      mine: [1],
+      mine: [0],
       theirs: [2],
       press: 'すりかえ',
     },
-    action: { type: 'xswap', mine: 1, theirs: 2 },
+    action: { type: 'xswap', mine: 0, theirs: 2 },
     keepTurn: true,
+    // 打つ前に言っても実感がない．一度使ったところで言う
+    after: { who: 'me', lead: 'すりかえは いちどのみ' },
   },
   {
     guide: {
@@ -103,7 +110,7 @@ const SCRIPT: Step[] = [
     action: { type: 'bluff', lanes: [0], foreign: 1 },
   },
   {
-    guide: { who: 'me', lead: 'こうかいしてはんてい', press: 'ぱす' },
+    guide: { who: 'me', lead: 'これでしょうぶする', press: 'ぱす' },
     action: { type: 'pass' },
   },
 ];
@@ -172,8 +179,10 @@ export class TutorialSession implements Session {
   private peekVal: { mine: Card[]; theirs: Card[] } | null = null;
   private peekSubs = new Set<(v: { mine: Card[]; theirs: Card[] } | null) => void>();
   private peekOn = true;
-  /** 相手の番の手前で止まっているか．待つのは読む時間を自分で決めさせるため */
-  private waitingTap = false;
+  /** 止まって読ませているところ．待つのは，読む速さを自分で決めさせるため．
+   *  'after' … 打ったあとの一言／'opp' … 相手の番の手前 */
+  private waiting: 'after' | 'opp' | null = null;
+  private afterGuide: Guide | null = null;
   readonly me: PlayerId = 0;
 
   constructor() {
@@ -240,20 +249,20 @@ export class TutorialSession implements Session {
     this.em.emit({ t: 'start' });
     this.refreshPeek();
     // 配っている間は，覚えることだけを言う
-    this.setGuide({
-      who: 'me',
-      lead: 'かーどをおぼえる',
-      note: 'じぶんのぶんも ふせられる',
-    });
+    this.setGuide({ who: 'me', lead: 'かーどをおぼえる', note: [TAP_NOTE] });
   }
 
   /** 盤が自分の入力を受けられるようになったところで，その手の一行を出す．
    *  配りも演出も長さが場面で変わるので，時間ではなく盤の合図に合わせる．
    *  透かしもここで差し替える（演出が済んだ形＝盤に見えている形になる） */
   ready() {
-    const step = SCRIPT[this.i];
-    if (step?.guide.who === 'me') this.setGuide(step.guide);
     this.refreshPeek();
+    // 打ったあとの一言は，演出が済んでから出す（盤に結果が見えている状態で読む）
+    if (this.waiting === 'after' && this.afterGuide) {
+      this.setGuide(this.withTap(this.afterGuide));
+      return;
+    }
+    this.showCurrent();
   }
 
   /** 台本の手だけを受け取る．違う手は短く断って，盤はそのまま */
@@ -276,30 +285,54 @@ export class TutorialSession implements Session {
       this.finish(a.type !== 'pass');
       return;
     }
+    this.setGuide(null);
+    if (step.after) {
+      this.afterGuide = step.after;
+      this.waiting = 'after'; // 一言は ready（演出のあと）で出す
+    }
     // 4つの手を続けて触らせる間は，手番を渡さない
     if (step.keepTurn) {
       this.s = { ...this.s, current: this.me };
-      this.setGuide(null);
       return;
     }
     // ここから相手の番．自分の演出が済んだころに，何が起きるかを出して待つ
-    this.setGuide(null);
-    this.later(() => {
-      const next = SCRIPT[this.i];
-      if (!next || next.guide.who !== 'opp') return;
-      // ここから相手の番．透かしはここで消す
-      this.peekOn = false;
-      this.refreshPeek();
-      this.waitingTap = true;
-      this.setGuide({ ...next.guide, note: TAP_NOTE });
-    }, beatOf(a));
+    this.later(() => this.offerOpp(), beatOf(a));
   }
 
-  /** 盤のどこかが押された．待っているときだけ，相手の番へ進む */
+  /** 盤のどこかが押された．止まって読ませているときだけ，先へ進む */
   tap() {
-    if (!this.waitingTap) return;
-    this.waitingTap = false;
-    this.playOpp();
+    if (this.waiting === 'after') {
+      this.waiting = null;
+      this.afterGuide = null;
+      const step = SCRIPT[this.i];
+      if (step?.guide.who === 'opp') this.offerOpp();
+      else this.showCurrent();
+      return;
+    }
+    if (this.waiting === 'opp') {
+      this.waiting = null;
+      this.playOpp();
+    }
+  }
+
+  /** 相手の番の手前で止まる．透かしはここで消える */
+  private offerOpp() {
+    const next = SCRIPT[this.i];
+    if (!next || next.guide.who !== 'opp' || this.waiting === 'after') return;
+    this.peekOn = false;
+    this.refreshPeek();
+    this.waiting = 'opp';
+    this.setGuide(this.withTap(next.guide));
+  }
+
+  /** いまの手の一行を出す（自分の番のときだけ） */
+  private showCurrent() {
+    const step = SCRIPT[this.i];
+    if (step?.guide.who === 'me') this.setGuide(step.guide);
+  }
+
+  private withTap(g: Guide): Guide {
+    return { ...g, note: [...(g.note ?? []), TAP_NOTE] };
   }
 
   /** 相手の番．台本どおりに打つ．一行は震えと同じ拍で出す */
@@ -339,7 +372,8 @@ export class TutorialSession implements Session {
     this.s = this.freshState();
     this.i = 0;
     this.peekOn = true;
-    this.waitingTap = false;
+    this.waiting = null;
+    this.afterGuide = null;
     this.refreshPeek();
     this.setGuide(null);
     this.start();
