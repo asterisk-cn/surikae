@@ -183,7 +183,7 @@
     wasReady = now;
   });
 
-  /** あそびかた：指示された手以外は受けない．
+  /** あそびかた：指示された手以外は受けない．札もボタンも同じで，
    *  見た目を変えると盤が別物になるので，disabledにはせず，押しても何も起きない */
   function cueBlocks(press: string) {
     return !!cue && cue.press !== press;
@@ -407,12 +407,14 @@
 
   function pickMine(l: Lane) {
     if (!inputOk) return;
+    if (cue && !cue.mine.includes(l)) return;
     if (selMine.includes(l)) selMine = selMine.filter((x) => x !== l);
     else if (selOpp.length === 1) selMine = [l];
     else if (selMine.length < 2) selMine = [...selMine, l];
   }
   function pickOpp(l: Lane) {
     if (!oppSelectable && !selOpp.includes(l)) return;
+    if (cue && !cue.theirs.includes(l)) return;
     if (selOpp.includes(l)) selOpp = [];
     else selOpp = [l];
   }

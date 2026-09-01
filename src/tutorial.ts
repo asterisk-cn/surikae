@@ -183,6 +183,9 @@ export class TutorialSession implements Session {
    *  'after' … 打ったあとの一言／'opp' … 相手の番の手前 */
   private waiting: 'after' | 'opp' | null = null;
   private afterGuide: Guide | null = null;
+  /** はじめの見せ合いの案内を出している間．伏せたら消す
+   *  （先攻の合図が横切ったあとまで「おぼえる」が残っていると，指示に見える） */
+  private intro = false;
   readonly me: PlayerId = 0;
 
   constructor() {
@@ -249,6 +252,7 @@ export class TutorialSession implements Session {
     this.em.emit({ t: 'start' });
     this.refreshPeek();
     // 配っている間は，覚えることだけを言う
+    this.intro = true;
     this.setGuide({ who: 'me', lead: 'かーどをおぼえる', note: [TAP_NOTE] });
   }
 
@@ -256,6 +260,7 @@ export class TutorialSession implements Session {
    *  配りも演出も長さが場面で変わるので，時間ではなく盤の合図に合わせる．
    *  透かしもここで差し替える（演出が済んだ形＝盤に見えている形になる） */
   ready() {
+    this.intro = false;
     this.refreshPeek();
     // 打ったあとの一言は，演出が済んでから出す（盤に結果が見えている状態で読む）
     if (this.waiting === 'after' && this.afterGuide) {
@@ -301,6 +306,12 @@ export class TutorialSession implements Session {
 
   /** 盤のどこかが押された．止まって読ませているときだけ，先へ進む */
   tap() {
+    // 覚え終わりの一押し．ここで案内を消す（このあと伏せて，先攻の合図が入る）
+    if (this.intro) {
+      this.intro = false;
+      this.setGuide(null);
+      return;
+    }
     if (this.waiting === 'after') {
       this.waiting = null;
       this.afterGuide = null;
@@ -374,6 +385,7 @@ export class TutorialSession implements Session {
     this.peekOn = true;
     this.waiting = null;
     this.afterGuide = null;
+    this.intro = false;
     this.refreshPeek();
     this.setGuide(null);
     this.start();
