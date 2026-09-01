@@ -167,13 +167,13 @@ export class BroadcastTransport implements Transport {
 }
 
 // ---- 共通の小物 ----
-type Emitter = {
+export type Emitter = {
   subs: Set<(e: SessionEvent) => void>;
   emit: (e: SessionEvent) => void;
   /** 購読者が付く前に流れたイベントを，最初の購読者に渡す */
   drain: (cb: (e: SessionEvent) => void) => void;
 };
-function makeEmitter(): Emitter {
+export function makeEmitter(): Emitter {
   const subs = new Set<(e: SessionEvent) => void>();
   const pending: SessionEvent[] = [];
   return {

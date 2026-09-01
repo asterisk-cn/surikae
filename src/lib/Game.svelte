@@ -19,7 +19,35 @@
   let {
     session,
     onExit,
-  }: { session: Session; onExit: () => void } = $props();
+    hint = null,
+    cue = null,
+    onReady = undefined,
+    peek = null,
+    onceOnly = false,
+    onTap = undefined,
+    holdPreview = false,
+  }: {
+    session: Session;
+    onExit: () => void;
+    /** あそびかたの一行．普段の対局ではnull */
+    hint?: { lead: string; note?: string[]; who?: 'me' | 'opp' } | null;
+    /** あそびかた：次に押す札とボタン．札が揃うまでは札を，
+     *  揃ったらボタンを呼ぶ（言葉で位置を言わずに済ませる） */
+    cue?: { mine: Lane[]; theirs: Lane[]; press: string } | null;
+    /** 自分の手番が始まり，入力を受けられるようになるたびに呼ばれる．
+     *  配りや演出の長さは場面で変わるので，あそびかたはこれに合わせる */
+    onReady?: (() => void) | undefined;
+    /** あそびかた：伏せた札に透かす数字．差し替えるのは渡す側の役目で，
+     *  盤は受け取ったものをそのまま出す（演出の途中で先の状態が出ないように，
+     *  あそびかたは手番が始まる合図に合わせて差し替える） */
+    peek?: { mine: CardV[]; theirs: CardV[] } | null;
+    /** あそびかた：一局きり．決着したら配り直さず，出てきたところへ戻る */
+    onceOnly?: boolean;
+    /** あそびかた：盤のどこかが押された．読み終えて先へ進む合図に使う */
+    onTap?: (() => void) | undefined;
+    /** あそびかた：はじめの見せ合いを時間で切らず，押されるまで開けておく */
+    holdPreview?: boolean;
+  } = $props();
 
   const SHAKE_MS = 950; // 全アクション共通の演出長（固定）
   const FLIP_MS = 560; // Card.svelte の .flip と揃える
@@ -127,6 +155,39 @@
   });
   // 奪うのは回数が残っているとき，引くのは山があるときだけ．ふりはいつでも打てる
   let canAct = $derived(actionKind !== null && !xswapSpent && !pileEmpty);
+
+  // まだ選べていない札を呼ぶ．選び終えたら札は静まり，ボタンが呼ぶ
+  let cueMine = $derived(
+    cue && inputOk ? cue.mine.filter((l) => !selMine.includes(l)) : [],
+  );
+  // 相手の札は自分の札を選んでからでないと触れない．触れないものは呼ばない
+  let cueOpp = $derived(
+    cue && inputOk && oppSelectable
+      ? cue.theirs.filter((l) => !selOpp.includes(l))
+      : [],
+  );
+  let cueReady = $derived(
+    !!cue &&
+      inputOk &&
+      selMine.length === cue.mine.length &&
+      selOpp.length === cue.theirs.length &&
+      cue.mine.every((l) => selMine.includes(l)) &&
+      cue.theirs.every((l) => selOpp.includes(l)),
+  );
+
+  // 入力を受けられるようになった瞬間だけを知らせる（あそびかたの一行の拍）
+  let wasReady = false;
+  $effect(() => {
+    const now = inputOk;
+    if (now && !wasReady) onReady?.();
+    wasReady = now;
+  });
+
+  /** あそびかた：指示された手以外は受けない．札もボタンも同じで，
+   *  見た目を変えると盤が別物になるので，disabledにはせず，押しても何も起きない */
+  function cueBlocks(press: string) {
+    return !!cue && cue.press !== press;
+  }
 
   function sleep(ms: number) {
     return new Promise((r) => setTimeout(r, ms));
@@ -295,6 +356,8 @@
         live = false;
         busy = false;
         skipDeal = false;
+        tapPending = false;
+        tapWaiter = null;
         againWait = false;
         // 配り終わるまで盤の6枚は伏せたまま．表に返すのは配りの後
         openMe = [false, false, false];
@@ -344,12 +407,14 @@
 
   function pickMine(l: Lane) {
     if (!inputOk) return;
+    if (cue && !cue.mine.includes(l)) return;
     if (selMine.includes(l)) selMine = selMine.filter((x) => x !== l);
     else if (selOpp.length === 1) selMine = [l];
     else if (selMine.length < 2) selMine = [...selMine, l];
   }
   function pickOpp(l: Lane) {
     if (!oppSelectable && !selOpp.includes(l)) return;
+    if (cue && !cue.theirs.includes(l)) return;
     if (selOpp.includes(l)) selOpp = [];
     else selOpp = [l];
   }
@@ -360,6 +425,7 @@
 
   async function act(real: boolean) {
     if (!inputOk) return;
+    if (cueBlocks(real ? actLabel : 'ぶらふ')) return;
     const mine = selMine.slice().sort() as Lane[];
     const opp = selOpp.slice() as Lane[];
     let a: Action | null = null;
@@ -403,10 +469,21 @@
 
   async function passAct() {
     if (!inputOk || !view.canPass) return;
+    if (cueBlocks('ぱす')) return;
     busy = true;
     acting = true;
     clearSel();
-    session.myAction({ type: 'pass' });
+    try {
+      session.myAction({ type: 'pass' });
+    } catch (err) {
+      toast = err instanceof Error ? err.message : 'そのてはうてない';
+      await sleep(1300);
+      toast = '';
+      busy = false;
+      acting = false;
+      void pump();
+      return;
+    }
     toast = 'ぱす';
     await sleep(600); // 自分の手は分かっているので短く．開示を待たせない
     toast = '';
@@ -629,8 +706,22 @@
   }
 
   async function previewThenCover() {
-    await sleep(PREVIEW_MS);
+    // あそびかたは，覚え終えたと自分で決めたところで伏せる
+    if (holdPreview) await waitTap();
+    else await sleep(PREVIEW_MS);
     await coverAll();
+  }
+
+  /** 次に盤が押されるまで待つ．待ち始める前に押されていたら，それを使う
+   *  （見せ合いに入った直後の一押しを取りこぼすと，先へ進めなくなる） */
+  let tapWaiter: (() => void) | null = null;
+  let tapPending = false;
+  function waitTap() {
+    if (tapPending) {
+      tapPending = false;
+      return Promise.resolve();
+    }
+    return new Promise<void>((r) => (tapWaiter = r));
   }
 
   /** 6枚を順に伏せる．ここから先は，自分の札も記憶だけが頼りになる */
@@ -694,7 +785,16 @@
 
 <svelte:window
   onpointerdown={() => {
-    if (scene === 'deal') skipDeal = true;
+    if (scene === 'deal') {
+      skipDeal = true; // 配りの最中の一押しは，配りを飛ばすためのもの
+    } else if (tapWaiter) {
+      const go = tapWaiter;
+      tapWaiter = null;
+      go();
+    } else {
+      tapPending = true;
+    }
+    onTap?.();
   }}
 />
 
@@ -731,6 +831,8 @@
             selected={selOpp.includes(l as Lane)}
             selectable={oppSelectable || selOpp.includes(l as Lane)}
             pulse={scene === 'preview'}
+            beckon={cueOpp.includes(l as Lane)}
+            peek={scene === 'magic' && peek ? peek.theirs[l] : null}
             owner="opp"
             verdict={verdictFor(l as Lane, 'opp')}
             onclick={() => pickOpp(l as Lane)}
@@ -774,6 +876,8 @@
             selected={selMine.includes(l as Lane)}
             selectable={inputOk}
             pulse={scene === 'preview'}
+            beckon={cueMine.includes(l as Lane)}
+            peek={scene === 'magic' && peek ? peek.mine[l] : null}
             owner="me"
             verdict={verdictFor(l as Lane, 'me')}
             onclick={() => pickMine(l as Lane)}
@@ -792,23 +896,42 @@
             <button
               class="act"
               class:spent={xswapSpent}
+              class:beckon={cueReady && cue?.press === actLabel}
               disabled={!canAct}
               onclick={() => act(true)}>{actLabel}</button
             >
-            <button class="act" disabled={!canBluff} onclick={() => act(false)}
-              >ぶらふ</button
+            <button
+              class="act"
+              class:beckon={cueReady && cue?.press === 'ぶらふ'}
+              disabled={!canBluff}
+              onclick={() => act(false)}>ぶらふ</button
             >
-            <button class="act" disabled={!view.canPass} onclick={passAct}
-              >ぱす</button
+            <button
+              class="act"
+              class:beckon={cueReady && cue?.press === 'ぱす'}
+              disabled={!view.canPass}
+              onclick={passAct}>ぱす</button
             >
           </div>
         {/if}
       {:else if verdictText}
         <p class="verdict">{verdictText}</p>
         <p class="score">{fin?.score[0]} - {fin?.score[1]}</p>
-        <button class="primary" disabled={againWait} onclick={again}
-          >{againWait ? 'あいてをまつ' : 'もういちど'}</button
-        >
+        {#if onceOnly}
+          <button class="primary" onclick={onExit}>もどる</button>
+        {:else}
+          <button class="primary" disabled={againWait} onclick={again}
+            >{againWait ? 'あいてをまつ' : 'もういちど'}</button
+          >
+        {/if}
+      {/if}
+
+      <!-- あそびかたの一行．押すものの下に置く -->
+      {#if hint && scene !== 'deal' && scene !== 'reveal' && !banner}
+        <p class="guide" class:opp={hint.who === 'opp'}>{hint.lead}</p>
+        {#each hint.note ?? [] as n}
+          <p class="guide-note">{n}</p>
+        {/each}
       {/if}
     </section>
   {/if}
@@ -1015,6 +1138,21 @@
     0%, 100% { opacity: 0.45; }
     50% { opacity: 1; }
   }
+  /* あそびかたの一行．手番の色（自分＝藍鼠／相手＝朱）で誰の番かを兼ねる */
+  .guide {
+    font-family: var(--font-display);
+    font-size: 1.15rem;
+    font-weight: 700;
+    letter-spacing: 0.1em;
+    color: var(--ai);
+  }
+  .guide.opp { color: var(--shu); }
+  .guide-note {
+    font-size: 0.88rem;
+    letter-spacing: 0.08em;
+    color: rgba(236, 229, 211, 0.5);
+    margin-top: -4px;
+  }
   .toast {
     font-family: var(--font-display);
     font-size: 1rem;
@@ -1040,6 +1178,25 @@
     letter-spacing: 0.12em;
     white-space: nowrap;
     transition: opacity 150ms ease, transform 120ms ease;
+  }
+  /* あそびかた：札が揃ったら，押すボタンが呼ぶ */
+  .act.beckon {
+    border-color: var(--kin);
+    animation: act-beckon 1.5s ease-in-out infinite;
+  }
+  @keyframes act-beckon {
+    0%, 100% { box-shadow: 0 0 0 0 rgba(201, 162, 39, 0); }
+    50% {
+      box-shadow:
+        0 0 0 2px var(--kin),
+        0 0 16px rgba(201, 162, 39, 0.35);
+    }
+  }
+  @media (prefers-reduced-motion: reduce) {
+    .act.beckon {
+      animation: none;
+      box-shadow: 0 0 0 2px var(--kin);
+    }
   }
   /* 「もうつかえない」は他より長いので，枠を保ったまま字を詰める */
   .act.spent {
